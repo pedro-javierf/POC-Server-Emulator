@@ -1,5 +1,6 @@
 // Server Emulator.cpp : Defines the entry point for the console application.
 //
+//Revision:2.0
 
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -7,18 +8,19 @@
 #include <windows.h>  //Windows General Purpose API
 #include <iostream>   //Console Output
 #include "console.h"  //Custom console functions
-#include <thread>  //C++11 standard of threading :)
-#include <string>
-#include <random>
+#include <thread>     //C++11 standard of threading :)
+#include <string>     //C++   strings
+#include <random>     //pseudo-random number generation
 
-#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "ws2_32.lib") //Link a winsock related lib
 
-int startupServerForListening(unsigned short port);
-std::string parseData(const char *packet);
-bool run(int socket, std::string command);
-int openChest(std::string com, size_t pos);
-bool buyItem(std::string com, size_t pos);
-bool connectionManager(int socket);
+/*Function prototypes*/
+
+int startupServerForListening(unsigned short port); //Creates a server socket
+bool run(int socket, std::string command);       //Analizes a command
+int openChest(std::string &com, size_t pos);      //runs the 'openChest' command
+bool buyItem(std::string &com, size_t pos);       //runs the 'buyItem' command
+bool connectionManager(int socket);              //Entrypoint of every new thread, manages new connections
 
 
 
@@ -34,12 +36,12 @@ int main(int argc, char* argv[])
 	else{ std::cout << "Winsock Started\n"; }
 
 
-	int serverSocket;
-	serverSocket = startupServerForListening(47799);
+	int serverSocket; //We'll create and bind a socket on port 47799
+	serverSocket = startupServerForListening(47799); 
 
 	if (serverSocket == -1)
 	{
-		pfail("Network Startup Failed!");        // Check for errors
+		pfail("Network Startup Failed!");     //Check for errors
 		pfail("Program Terminating");
 		return 1;
 	}
@@ -55,55 +57,66 @@ int main(int argc, char* argv[])
 	{
 		pfail("Accept Failed!");
 	}
+	//If everything was fine, create a new thread to manage the new connection
 	else
 	{
 		std::cout << "New connection done." << std::endl;
+		//Thread entrypoint is 'connectionManager()' with argv 'clientSocket'
 		std::thread p(connectionManager, (int)clientSocket);
+		//Detachs the thread to make it free!
 		p.detach();
 	}
 
 	}
 	
-
-
-	std::cin.get();
 	WSACleanup();
 	return 0;
 }
 
-
-int openChest(std::string com, size_t pos)
+//Will parse a 'OpenChest' command
+//The structure of packets is:
+//OpenChest#XXXX...
+//Where anything after # is the parameter (number of chests opened each time)
+//The com variable is a reference so we're modifying the real value
+int openChest(std::string &com, size_t pos)
 {
-	std::cout << "OpenChest found in: " << pos << '\n';
-	std::string result = com.erase(0, 10);
-	std::cout << "Chest Number: " << result;
-	std::minstd_rand(1);
+	std::string result = com.substr(pos+10, 4); //OpenChest#XXXX -> The maximun number of chests opened at the same time is 9999
+	std::cout << "Someone opened: " << result << " chests!" << std::endl;
+	
 	return (rand() % 100);
 	//return (std::stoi(result));
 }
 
-bool buyItem(std::string com, size_t pos)
+//Will parse a 'buyItem' command
+//The structure of packets is:
+//BuyItem#XXXX...
+//Where anything after # is the parameter (money of the client)
+bool buyItem(std::string &com, size_t pos)
 {
+	//This is the price of the item in our server
 	int itemPrice = 300;
-	std::cout << "BuyItem found in: " << pos << '\n';
 	std::string result = com.erase(0, 8);
-	std::cout << "Money: " << result;
+	std::cout << "Client with " << result << "coins requested a buy" << std::endl;
 
-	if (std::stoi(result) >= itemPrice){ return TRUE; }
-	else{ return FALSE; }
+	if (std::stoi(result) >= itemPrice){ std::cout << "Buy Accepted" << std::endl; return TRUE; }
+	else{ std::cout << "Buy Denied" << std::endl; return FALSE; }
 }
 
+//This function manages connections and is the 
+//entrypoint for any new connection made by the main thread
 bool connectionManager(int socket)
 {
 	// The number of bytes I send/read ... will also serve as my error code
 	int nBytes;
-	//Buffer where we will store received data. it's filled with trash 
-	char buffer[32];
-	memset(buffer, 0xcc, 32);
+	//Buffer where we will store received data. it's firstly filled with trash 
+	std::string buffer(32, 0xcc);
 	for (;;)
 	{	
+		/*Call the recv function, will receive a 32 bytes package
+		even not the 32 bytes may be legit data (extra bytes are handled by recv() as trash)*/
+		nBytes = recv(socket, (char*)&buffer[0], 32, 0);
+
 		
-		nBytes = recv(socket, (char*)&buffer, sizeof(buffer), 0);
 		switch (nBytes)
 		{
 		case 0:
@@ -123,6 +136,7 @@ bool connectionManager(int socket)
 	}
 }
 
+//Based on Kaylires function
 int startupServerForListening(unsigned short port)
 {
 	
@@ -174,40 +188,44 @@ int startupServerForListening(unsigned short port)
 	return mySocket;
 }
 
+//Parses packets to detect the command sent by the client
 bool run(int socket,std::string command)
 {
+	//A size_t variable to hold the position in a string where the important data is
 	std::size_t tempPos;
-
+	//We'll start searching the OpenChest command, if not found, search the next command (is not a really good code, but does its job)
+	//Finds position where substring 'OpenChest#' starts
 	tempPos = command.find("OpenChest#");
 	
+	//If there weren't any error and it was found
 	if (tempPos != std::string::npos)
 	{
+		//int variable to hold the parsed clients money
 		int money;
 		money = openChest(command,tempPos );
 		std::cout << std::endl <<"Found " << money << "coins" << std::endl;
-		//char packet[32] = "GetCoins#";
-		std::string packet = "GetCoins#";
-		std::string stringMoney;
-		//char stringMoney[4];
-		stringMoney = std::to_string(money);
-		//_itoa(money, stringMoney, 10);
-		//strcat(packet, stringMoney);
-		packet += stringMoney;
 
-		std::cout << "Ready to send!";
+		//We have the money stored into a int variable. We need to cast it to string
+		std::string strMoney = std::to_string(money);
+		//And build the packet
+		std::string packet = "GetCoins#" + strMoney;
+
+		//Send the crafted packet
 		send(socket, packet.c_str(), packet.length(), 0);
-		std::cout << " DONE!" << std::endl;
+		
 		
 	}
 	else
 	{
+		//Finds the other command
 		tempPos = command.find("BuyItem#");
 		if (tempPos != std::string::npos)
 		{
+			//This is the packet we'll send if the client is rich!
 			std::string buyOkpacket = "GetItem#1";
+			//And this one if it's poor :(
 			std::string buyFailedPacket = "BuyDennied#0";
-			//char buyOk[] = "GetItem#1";
-			//char buyFl[] = "BuyDennied#0";
+
 			bool x = buyItem(command, tempPos);
 
 			if (x){ send(socket, buyOkpacket.c_str(), buyOkpacket.length(), 0); }
@@ -216,7 +234,6 @@ bool run(int socket,std::string command)
 	}
 	
 
-	//std::cout << command.erase(0,'Open');
 
 	return 0;
 }
